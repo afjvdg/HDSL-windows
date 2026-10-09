@@ -23,6 +23,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -560,8 +561,17 @@ public final class DshInstanceManager {
 
         boolean moved = false;
         if (Files.isDirectory(oldDirectory)) {
+            // Nothing at the destination is removed to make room for the move. The
+            // destination is a sibling inside a folder of the launcher's — which for an
+            // instance in a folder the user added is a directory they own, and may be
+            // their own directory under the new name rather than an instance's. Renaming
+            // over it would delete what is there, tree and all, with nothing said: the
+            // name is refused instead, and the folder is named so it can be moved aside.
+            if (Files.exists(newDirectory, LinkOption.NOFOLLOW_LINKS)) {
+                throw new DshException("Cannot rename \"" + id + "\" to \"" + normalized + "\": "
+                        + newDirectory + " already exists");
+            }
             try {
-                deleteQuietly(newDirectory);
                 Files.move(oldDirectory, newDirectory);
                 moved = true;
             } catch (IOException e) {

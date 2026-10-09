@@ -196,6 +196,31 @@ class DshInstanceFoldersTest {
     }
 
     @Test
+    void renamingNeverDeletesWhateverAlreadyHoldsTheNewName() throws Exception {
+        // The instance's directory is inside a folder of the launcher's, and for an instance in a
+        // folder the user added that folder is theirs: the sibling the new name resolves to can be
+        // their own directory rather than an instance's. Renaming used to empty the destination
+        // first, so that directory and everything in it was deleted with nothing said — the row
+        // changed name and the user's files were gone.
+        create("renaming-over", other);
+        Path occupied = Files.createDirectories(other.resolve("occupied-name"));
+        Path document = Files.writeString(occupied.resolve("notes.txt"), "the user's own file");
+
+        DshException refused = assertThrows(DshException.class,
+                () -> DshInstanceManager.rename("renaming-over", "occupied-name"));
+
+        assertTrue(refused.getMessage().contains(occupied.toString()),
+                "the refusal names the folder that is in the way: " + refused.getMessage());
+        assertTrue(Files.isDirectory(occupied), "the folder that held the name is left where it is");
+        assertTrue(Files.isRegularFile(document), "and so is everything inside it");
+        assertTrue(Files.isDirectory(other.resolve("renaming-over")),
+                "the instance keeps its own directory, because the rename did not happen");
+        assertEquals(other.resolve("renaming-over"),
+                DshInstanceManager.find("renaming-over").instanceDirectory());
+        DshInstanceManager.delete("renaming-over");
+    }
+
+    @Test
     void removingTakesTheInstanceFromItsOwnFolder() throws Exception {
         create("removed-from-other", other);
         create("kept-in-shown", shown);
