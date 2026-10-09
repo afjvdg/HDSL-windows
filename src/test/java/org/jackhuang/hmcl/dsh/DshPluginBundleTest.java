@@ -204,13 +204,8 @@ class DshPluginBundleTest {
 
     @Test
     void aMemberInsideThePluginDirectoryIsStillUnpacked(@TempDir Path directory) throws Exception {
-        // The other half of the check above: what stays inside is put back as before, so the refusal
-        // is about leaving the directory rather than about carrying a path at all.
         Path pack = directory.resolve("pack.hdslp");
         try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(pack))) {
-            zip.putNextEntry(new ZipEntry("plugins/dsh-secret-1.0.0.tgz"));
-            zip.write(pack("dsh-secret", "1.0.0"));
-            zip.closeEntry();
             zip.putNextEntry(new ZipEntry("plugins/dsh-secret-1.0.0/lib/index.js"));
             zip.write("export const x = 1;\n".getBytes(StandardCharsets.UTF_8));
             zip.closeEntry();
@@ -220,8 +215,11 @@ class DshPluginBundleTest {
         Path released = DshPluginBundle.release(pack, plugins, "dsh-secret", "1.0.0");
 
         assertNotNull(released);
-        assertTrue(Files.isRegularFile(plugins.resolve("dsh-secret-1.0.0/lib/index.js")),
-                "a member that stays inside the plugin directory is unpacked where it says");
+        assertEquals(plugins.toAbsolutePath().normalize().resolve("dsh-secret-1.0.0"), released,
+                "a payload carried as a directory comes back as that directory");
+        assertEquals("export const x = 1;\n",
+                Files.readString(plugins.resolve("dsh-secret-1.0.0/lib/index.js")),
+                "and its members are unpacked inside it");
     }
 
     @Test
