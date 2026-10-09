@@ -61,7 +61,7 @@ class ArchiveFileTreeTest {
         // holds and not what an extractor would walk — which is the whole question here.
         List<String> names = new ArrayList<>();
         try (ArchiveFileTree<?, ?> tree = CompressingUtils.openZipTree(archive)) {
-            collect(tree.getRoot(), names);
+            collect(tree.getRoot(), "", names);
         }
 
         assertTrue(names.contains("node-v22/bin/node"),
@@ -86,7 +86,7 @@ class ArchiveFileTreeTest {
 
         List<String> names = new ArrayList<>();
         try (ArchiveFileTree<?, ?> tree = CompressingUtils.openZipTree(archive)) {
-            collect(tree.getRoot(), names);
+            collect(tree.getRoot(), "", names);
         }
 
         // The walk reads the names a directory at a time, and each one is the single name of an entry
@@ -127,15 +127,21 @@ class ArchiveFileTreeTest {
 
     /// Collects every name in one directory of a tree, and then of its children.
     ///
-    /// @param dir   the directory to read
-    /// @param names receives each name, as a path relative to the root
-    private static void collect(ArchiveFileTree.Dir<?> dir, List<String> names) {
-        String prefix = dir.isRoot() ? "" : dir.getName() + "/";
+    /// The path an extractor writes is the one built here — each directory's own name joined to the
+    /// path that reached it — so the walk carries that path down rather than reading a directory's
+    /// name on its own. Reading it on its own loses the directories above: a walk that does that
+    /// reports `bin/node` for an entry named `node-v22/bin/node`, which is the shape of the defect
+    /// this file is about and not something to reproduce in the check for it.
+    ///
+    /// @param dir    the directory to read
+    /// @param prefix the path from the root to this directory, ending in `/`, or empty at the root
+    /// @param names  receives each name, as a path relative to the root
+    private static void collect(ArchiveFileTree.Dir<?> dir, String prefix, List<String> names) {
         for (String name : dir.getFiles().keySet()) {
             names.add(prefix + name);
         }
-        for (ArchiveFileTree.Dir<?> sub : dir.getSubDirs().values()) {
-            collect(sub, names);
+        for (Map.Entry<String, ? extends ArchiveFileTree.Dir<?>> sub : dir.getSubDirs().entrySet()) {
+            collect(sub.getValue(), prefix + sub.getKey() + "/", names);
         }
     }
 
