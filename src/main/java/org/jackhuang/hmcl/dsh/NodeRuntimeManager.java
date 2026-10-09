@@ -563,7 +563,7 @@ public final class NodeRuntimeManager {
         }
         if (name.endsWith(".tar.gz") || name.endsWith(".tgz")) {
             try (TarFileTree tree = TarFileTree.open(archive)) {
-                extract(tree, tree.getRoot(), target);
+                extract(tree, tree.getRoot(), target, target);
             }
             return;
         }
@@ -587,7 +587,7 @@ public final class NodeRuntimeManager {
                 Files.copy(xz, tarFile, StandardCopyOption.REPLACE_EXISTING);
             }
             try (TarFileTree tree = TarFileTree.open(tarFile)) {
-                extract(tree, tree.getRoot(), target);
+                extract(tree, tree.getRoot(), target, target);
             }
         } finally {
             Files.deleteIfExists(tarFile);
@@ -606,7 +606,7 @@ public final class NodeRuntimeManager {
     /// @throws IOException when extraction fails
     private static void extractZip(Path archive, Path target) throws IOException {
         try (ZipFileTree tree = CompressingUtils.openZipTree(archive)) {
-            extract(tree, tree.getRoot(), target);
+            extract(tree, tree.getRoot(), target, target);
         }
     }
 
@@ -615,26 +615,39 @@ public final class NodeRuntimeManager {
     /// @param tree   the archive being read
     /// @param dir    the directory to unpack
     /// @param target the destination directory
+    /// @param root   the directory the whole archive is unpacked into
     /// @param <R>    the reader type
     /// @param <E>    the entry type
     /// @throws IOException when an entry cannot be written
     private static <R, E extends ArchiveEntry> void extract(ArchiveFileTree<R, E> tree,
                                                             ArchiveFileTree.Dir<E> dir,
-                                                            Path target) throws IOException {
+                                                            Path target,
+                                                            Path root) throws IOException {
         for (var entry : dir.getFiles().entrySet()) {
             Path destination = target.resolve(entry.getKey());
             E archiveEntry = entry.getValue();
             if (tree.isLink(archiveEntry)) {
                 Files.deleteIfExists(destination);
-                try {
-                    Files.createSymbolicLink(destination, Path.of(tree.getLink(archiveEntry)));
-                } catch (IOException | UnsupportedOperationException e) {
-                    // A symlink the filesystem refuses is copied as the file it
-                    // points at instead: the zip of the Windows distribution has
-                    // none, but one made elsewhere might, and refusing to unpack
-                    // over it would fail an install that could have succeeded.
-                    tree.extractTo(archiveEntry, destination);
+                Path link = Path.of(tree.getLink(archiveEntry));
+                // A link is recreated only when it stays inside what is being unpacked: the
+                // target travels in the archive, so `node-v22/bin/npm -> /etc/passwd` is a link
+                // this launcher would otherwise create and then read through, and the archive
+                // says where it points. One that leaves is not unpacked at all.
+                if (!link.isAbsolute() && target.resolve(link).normalize().startsWith(root)) {
+                    try {
+                        Files.createSymbolicLink(destination, link);
+                        continue;
+                    } catch (IOException | UnsupportedOperationException e) {
+                        // A symlink the filesystem refuses is copied as the file it
+                        // points at instead: the zip of the Windows distribution has
+                        // none, but one made elsewhere might, and refusing to unpack
+                        // over it would fail an install that could have succeeded.
+                    }
+                } else {
+                    LOG.warning("Not unpacking the link " + destination + " -> " + link
+                            + ": it points outside " + root);
                 }
+                tree.extractTo(archiveEntry, destination);
                 continue;
             }
             Files.createDirectories(destination.getParent());
@@ -646,7 +659,7 @@ public final class NodeRuntimeManager {
         for (var subDirectory : dir.getSubDirs().entrySet()) {
             Path destination = target.resolve(subDirectory.getKey());
             Files.createDirectories(destination);
-            extract(tree, subDirectory.getValue(), destination);
+            extract(tree, subDirectory.getValue(), destination, root);
         }
     }
 

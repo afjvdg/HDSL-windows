@@ -17,6 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /// What a pack does with a plugin an instance installed from a file.
@@ -166,6 +167,61 @@ class DshPluginBundleTest {
                 "a path from another machine would make every later operation on the profile fail");
         assertTrue(DshModpacks.listsBootable(pack, json(dependencies)).isEmpty(),
                 "and a bundle the profile does not have stops the instance from starting");
+    }
+
+    @Test
+    void aMemberThatWouldLandOutsideThePluginDirectoryIsNotUnpacked(@TempDir Path directory) throws Exception {
+        // A pack is an archive somebody else made, and a payload's name is a path. What the name is
+        // checked against is the package it belongs to — but a name that starts with the right
+        // package and then steps out of the plugin directory, written the two ways Windows and POSIX
+        // spell it, used to be written wherever it pointed: over an instance, over its profile, over
+        // anything the user owns. What it is now is a member that is not unpacked at all, which is
+        // what the first assertion below is about: the member that carries the pack's payload still
+        // arrives, so a pack is refused the step out rather than refused for carrying a path.
+        Path plugins = directory.resolve("instance/plugins");
+        for (String escape : List.of("plugins/dsh-secret-1.0.0/../../PWNED.txt",
+                "plugins/dsh-secret-1.0.0/..\\..\\PWNED.txt")) {
+            Path pack = directory.resolve("pack-" + escape.hashCode() + ".hdslp");
+            try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(pack))) {
+                zip.putNextEntry(new ZipEntry("plugins/dsh-secret-1.0.0.tgz"));
+                zip.write(pack("dsh-secret", "1.0.0"));
+                zip.closeEntry();
+                zip.putNextEntry(new ZipEntry(escape));
+                zip.write("planted".getBytes(StandardCharsets.UTF_8));
+                zip.closeEntry();
+            }
+
+            Path released = DshPluginBundle.release(pack, plugins, "dsh-secret", "1.0.0");
+
+            assertNotNull(released, escape + " is the member that has to be dropped, not the payload");
+            assertTrue(Files.isRegularFile(released), "the payload is unpacked where it belongs");
+            assertFalse(Files.exists(directory.resolve("instance/PWNED.txt")),
+                    escape + " was written outside the plugin directory");
+            assertFalse(Files.exists(directory.resolve("PWNED.txt")),
+                    escape + " was written outside the instance");
+        }
+    }
+
+    @Test
+    void aMemberInsideThePluginDirectoryIsStillUnpacked(@TempDir Path directory) throws Exception {
+        // The other half of the check above: what stays inside is put back as before, so the refusal
+        // is about leaving the directory rather than about carrying a path at all.
+        Path pack = directory.resolve("pack.hdslp");
+        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(pack))) {
+            zip.putNextEntry(new ZipEntry("plugins/dsh-secret-1.0.0.tgz"));
+            zip.write(pack("dsh-secret", "1.0.0"));
+            zip.closeEntry();
+            zip.putNextEntry(new ZipEntry("plugins/dsh-secret-1.0.0/lib/index.js"));
+            zip.write("export const x = 1;\n".getBytes(StandardCharsets.UTF_8));
+            zip.closeEntry();
+        }
+
+        Path plugins = directory.resolve("instance/plugins");
+        Path released = DshPluginBundle.release(pack, plugins, "dsh-secret", "1.0.0");
+
+        assertNotNull(released);
+        assertTrue(Files.isRegularFile(plugins.resolve("dsh-secret-1.0.0/lib/index.js")),
+                "a member that stays inside the plugin directory is unpacked where it says");
     }
 
     @Test
